@@ -1,0 +1,43 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    basic_auth:
+      username: admin
+      password: CHANGE_ME
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Targets updated: these 6 services now live in Kubernetes
+  # (Milestone 1.J), not in this docker-compose network -- reached via
+  # their NodePorts instead of docker-compose container-name DNS.
+  # Same host-reachability rules as the OTel Collector fix (Milestone
+  # 1.M): host.docker.internal works out of the box for kind on Docker
+  # Desktop; kind on Linux needs your Docker bridge gateway IP instead
+  # (docker network inspect bridge | grep Gateway); minikube needs
+  # host.minikube.internal.
+  - job_name: 'gateway'
+    static_configs:
+      - targets: ['host.docker.internal:30080']
+
+  - job_name: 'auth-service'
+    static_configs:
+      - targets: ['host.docker.internal:30001']
+
+  - job_name: 'payment-service'
+    static_configs:
+      - targets: ['host.docker.internal:30002']
+
+  - job_name: 'inventory-service'
+    static_configs:
+      - targets: ['host.docker.internal:30000']
+
+  - job_name: 'recommendation-service'
+    static_configs:
+      - targets: ['host.docker.internal:30003']
+
+  - job_name: 'notification-service'
+    static_configs:
+      - targets: ['host.docker.internal:30004']

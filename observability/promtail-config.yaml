@@ -1,0 +1,34 @@
+# Promtail is a log-shipping agent: it discovers running containers,
+# tails their stdout/stderr, and forwards each line to Loki. This is
+# what "points service logs at Loki" actually means in practice -- no
+# code changes needed in any of the 6 services, since Docker already
+# captures everything they print to their console.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      # Promtail talks to the Docker daemon directly (via the mounted
+      # socket) to discover every running container -- the same way
+      # `docker ps` does -- and automatically starts tailing each one's
+      # logs, without you having to list containers by name.
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      # Attaches the container's name as a "container" label on every
+      # log line it ships, so you can filter logs by service in
+      # Grafana later (e.g. {container="payment-service"}).
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: 'logstream'

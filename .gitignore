@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+*.pyc
 .venv/
 venv/
 .env
@@ -21,5 +22,16 @@ build/
 Thumbs.db
 .vscode/
 
-# Logs
+# Logs & runtime state
 *.log
+notified_incidents.json
+
+# Secrets & local config
+values-secrets.yaml
+observability/prometheus-web-config.yml
+.env.local
+.env.*.local
+
+# Temporary archives
+incident-commander-missing-files.zip
+incident-commander-missing-files/

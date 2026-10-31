@@ -1,0 +1,12 @@
+# Copy to observability/prometheus-web-config.yml (gitignored) and replace
+# the hash. Generate it with:
+#
+#   pip install bcrypt
+#   python -c "import bcrypt, getpass; pw = getpass.getpass('Prometheus password: '); print(bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode())"
+#
+# The PLAINTEXT password goes in infra/.env (PROMETHEUS_BASIC_AUTH_PASSWORD)
+# and values-secrets.yaml (prometheusSecrets.password). This file only
+# ever holds the HASH.
+
+basic_auth_users:
+  admin: "CHANGE_ME_BCRYPT_HASH"

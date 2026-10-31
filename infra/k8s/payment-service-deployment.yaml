@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service
+  labels:
+    app: payment-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payment-service
+  template:
+    metadata:
+      labels:
+        app: payment-service
+    spec:
+      containers:
+        - name: payment-service
+          image: payment-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8002
+          env:
+            # "postgres" and "redis" resolve via Kubernetes' internal
+            # DNS to the Services defined in Step 1.26 -- same idea as
+            # container-name resolution in docker-compose, just backed
+            # by a different DNS implementation (CoreDNS).
+            - name: POSTGRES_HOST
+              value: postgres
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_USER
+              value: incident_admin
+            - name: POSTGRES_PASSWORD
+              value: incident_pass
+            - name: POSTGRES_DB
+              value: incident_commander
+            - name: REDIS_HOST
+              value: redis
+            - name: REDIS_PORT
+              value: "6379"
+
+              # NEW in Milestone 1.K: resource requests/limits.
+          # "requests" is what the scheduler reserves for this container
+          # when deciding which node to place it on, and it's also the
+          # BASELINE the HPA below measures CPU utilization against --
+          # without a cpu request set here, percentage-based autoscaling
+          # has no denominator to compute a percentage from, and simply
+          # won't work. "limits" is a hard ceiling: if this container
+          # tries to use more than 250m CPU, it gets throttled (not
+          # killed); if it tries to use more than 256Mi memory, it DOES
+          # get killed (OOMKilled) and restarted.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          # NEW in Milestone 1.K: readiness probe.
+          # Kubernetes calls this endpoint repeatedly. If it stops
+          # responding successfully, the Pod is pulled out of the
+          # payment-service Service's routing rotation -- traffic stops
+          # reaching it -- but the Pod is NOT restarted. This handles
+          # "temporarily can't serve traffic" (e.g. still finishing
+          # startup, or Redis/Postgres briefly unreachable) without
+          # treating it as a crash.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # NEW in Milestone 1.K: liveness probe.
+          # Same endpoint, different consequence: if THIS one fails
+          # repeatedly, Kubernetes concludes the container is in a
+          # broken/hung state and RESTARTS it. Liveness answers "is
+          # this process alive and functioning," not "should it receive
+          # traffic right now" -- which is why it's kept deliberately
+          # lightweight (see the Why section below).
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-service
+spec:
+  selector:
+    app: payment-service
+  type: ClusterIP
+  ports:
+    - port: 8002
+      targetPort: 8002

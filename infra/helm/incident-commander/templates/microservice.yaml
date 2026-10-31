@@ -1,0 +1,108 @@
+{{- range .Values.services }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .name }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .name }}
+  labels:
+    app: {{ .name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .name }}
+    spec:
+      serviceAccountName: {{ .name }}
+      containers:
+        - name: {{ .name }}
+          image: {{ .image }}
+          imagePullPolicy: {{ $.Values.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .port }}
+          env:
+            # Every service now ALWAYS gets this, regardless of
+            # whether it defines any service-specific env vars of its
+            # own -- fixing the gap described above.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ $.Values.otelCollectorEndpoint | quote }}
+            {{- if .env }}
+            {{- range $key, $value := .env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
+            - name: OTEL_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Release.Name }}-secrets
+                  key: otel-auth-token
+            {{- if .secretEnv }}
+            {{- range $envName, $secretKey := .secretEnv }}
+            - name: {{ $envName }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Release.Name }}-secrets
+                  key: {{ $secretKey }}
+            {{- end }}
+            {{- end }}
+          {{- if .resources }}
+          resources:
+            {{- if .resources.requests }}
+            requests:
+              cpu: {{ .resources.requests.cpu }}
+              memory: {{ .resources.requests.memory }}
+            {{- end }}
+            {{- if .resources.limits }}
+            limits:
+              cpu: {{ .resources.limits.cpu }}
+              memory: {{ .resources.limits.memory }}
+            {{- end }}
+          {{- end }}
+          {{- if .readinessProbe }}
+          readinessProbe:
+            httpGet:
+              path: {{ .readinessProbe.path }}
+              port: {{ .port }}
+            initialDelaySeconds: {{ .readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .readinessProbe.periodSeconds }}
+            timeoutSeconds: 3
+            failureThreshold: 3
+          {{- end }}
+          {{- if .livenessProbe }}
+          livenessProbe:
+            httpGet:
+              path: {{ .livenessProbe.path }}
+              port: {{ .port }}
+            initialDelaySeconds: {{ .livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .livenessProbe.periodSeconds }}
+            timeoutSeconds: 3
+            failureThreshold: 3
+          {{- end }}
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .name }}
+spec:
+  selector:
+    app: {{ .name }}
+  type: {{ if .service }}{{ .service.type }}{{ else }}ClusterIP{{ end }}
+  ports:
+    - port: {{ .port }}
+      targetPort: {{ .port }}
+      {{- if and .service (eq .service.type "NodePort") }}
+      nodePort: {{ .service.nodePort }}
+      {{- end }}
+---
+{{- end }}

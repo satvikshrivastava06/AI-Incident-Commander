@@ -1,0 +1,21 @@
+# Adds Tempo and Loki as additional Grafana data sources, alongside
+# the Prometheus one provisioned in Milestone 1.G. Grafana loads every
+# YAML file in this folder, so this can live as its own file instead
+# of editing the existing prometheus.yml.
+
+apiVersion: 1
+
+datasources:
+  - name: Tempo
+    type: tempo
+    access: proxy
+    uid: tempo
+    url: http://tempo:3200
+    editable: true
+
+  - name: Loki
+    type: loki
+    access: proxy
+    uid: loki
+    url: http://loki:3100
+    editable: true

@@ -1,0 +1,17 @@
+# This tells Grafana: "watch this folder on disk, and automatically
+# load any dashboard JSON files you find there." It's how the
+# services-overview.json dashboard from Step 1.18 will show up in
+# Grafana's UI without you manually importing it.
+
+apiVersion: 1
+
+providers:
+  - name: 'AI Incident Commander Dashboards'
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

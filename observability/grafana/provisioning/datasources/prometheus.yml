@@ -1,0 +1,19 @@
+# Grafana "provisioning" lets you define data sources and dashboards as
+# code (YAML/JSON files) instead of clicking through the UI every time
+# you spin up a fresh container. Grafana reads this file on startup and
+# auto-configures the connection to Prometheus -- no manual setup step.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    uid: prometheus
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    basicAuth: true
+    basicAuthUser: admin
+    secureJsonData:
+      basicAuthPassword: ${PROMETHEUS_BASIC_AUTH_PASSWORD}

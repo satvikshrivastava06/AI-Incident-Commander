@@ -1,0 +1,53 @@
+# A Deployment doesn't run containers directly -- it manages a
+# ReplicaSet, which in turn manages Pods. This layering is what gives
+# you self-healing for free: if a Pod dies, the ReplicaSet notices the
+# actual Pod count no longer matches `replicas`, and creates a new one
+# to close the gap. You never talk to the ReplicaSet directly; you
+# only ever declare "I want N replicas of this Pod template" via the
+# Deployment, and Kubernetes handles the rest.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-service
+  labels:
+    app: inventory-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inventory-service
+  template:
+    metadata:
+      labels:
+        app: inventory-service
+    spec:
+      containers:
+        - name: inventory-service
+          image: inventory-service:latest
+          # Without this, Kubernetes defaults to imagePullPolicy: Always
+          # and tries to pull "inventory-service:latest" from a remote
+          # registry -- which doesn't exist for a locally-built image.
+          # IfNotPresent tells it: "use the image already loaded onto
+          # this node; only pull remotely if it's missing."
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+---
+# A Service gives this Deployment's Pods a STABLE address. Pods are
+# disposable -- every time one restarts, it gets a brand-new internal
+# IP. Nothing else in the cluster could reliably find inventory-service
+# if they had to track individual Pod IPs. A Service solves this with
+# one fixed DNS name ("inventory-service") that transparently
+# load-balances across whichever Pods currently match its selector,
+# no matter how many times they've been replaced underneath it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory-service
+spec:
+  selector:
+    app: inventory-service
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: 8000

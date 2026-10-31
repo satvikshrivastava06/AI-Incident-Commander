@@ -1,0 +1,6 @@
+apiVersion: v2
+name: incident-commander
+description: Helm chart for the AI Incident Commander synthetic e-commerce system (Stage 1)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,24 @@
+# HorizontalPodAutoscaler: watches a target's actual resource usage and
+# adjusts its replica count automatically -- scaling out under load,
+# scaling back in once load subsides.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: payment-service-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: payment-service
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # 50% of the "requests.cpu: 100m" set on the Deployment above
+          # -- i.e. once payment-service Pods are, on average, using
+          # more than 50m of CPU each, the HPA adds another replica.
+          averageUtilization: 50

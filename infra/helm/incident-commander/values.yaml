@@ -1,0 +1,217 @@
+services:
+  - name: inventory-service
+    image: inventory-service:latest
+    port: 8000
+    env: {}
+    service:
+      type: NodePort
+      nodePort: 30000
+
+  - name: auth-service
+    image: auth-service:latest
+    port: 8001
+    env: {}
+    service:
+      type: NodePort
+      nodePort: 30001
+
+  - name: payment-service
+    image: payment-service:latest
+    port: 8002
+    env:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: incident_admin
+      POSTGRES_DB: incident_commander
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    secretEnv:
+      POSTGRES_PASSWORD: postgres-password
+      REDIS_PASSWORD: redis-password
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+    readinessProbe:
+      path: /health
+      initialDelaySeconds: 5
+      periodSeconds: 5
+    livenessProbe:
+      path: /health
+      initialDelaySeconds: 10
+      periodSeconds: 10
+    service:
+      type: NodePort
+      nodePort: 30002
+
+  - name: recommendation-service
+    image: recommendation-service:latest
+    port: 8003
+    env: {}
+    service:
+      type: NodePort
+      nodePort: 30003
+
+  - name: notification-service
+    image: notification-service:latest
+    port: 8004
+    env: {}
+    service:
+      type: NodePort
+      nodePort: 30004
+
+  - name: gateway
+    image: gateway:latest
+    port: 8005
+    env:
+      AUTH_SERVICE_URL: http://auth-service:8001
+      PAYMENT_SERVICE_URL: http://payment-service:8002
+      INVENTORY_SERVICE_URL: http://inventory-service:8000
+      RECOMMENDATION_SERVICE_URL: http://recommendation-service:8003
+    service:
+      type: NodePort
+      nodePort: 30080
+
+  # ---- NEW: the reasoning engine, now real Deployments ----
+  # No `service:` override on any of these three -- plain ClusterIP is
+  # correct. Nothing outside the cluster needs to reach them directly
+  # except your own local dashboard during development, and
+  # `kubectl port-forward` already covers that -- same tool you've
+  # been using for Postgres this whole time. Unlike the 6 services
+  # above, these were never given NodePort exposure for Prometheus's
+  # sake, because they don't emit Prometheus metrics themselves.
+
+  - name: incident-engine
+    image: incident-engine:latest
+    port: 8007
+    env:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: incident_admin
+      POSTGRES_DB: incident_commander
+    secretEnv:
+      POSTGRES_PASSWORD: postgres-password
+      API_KEY: api-key
+    readinessProbe:
+      path: /health
+      initialDelaySeconds: 5
+      periodSeconds: 5
+    livenessProbe:
+      path: /health
+      initialDelaySeconds: 10
+      periodSeconds: 10
+
+  - name: dependency-graph
+    image: dependency-graph:latest
+    port: 8006
+    env:
+      # host.docker.internal:9094 -- the NEW dedicated Kafka listener
+      # from Part 1, specifically because this pod is not on the same
+      # Docker network as the kafka container.
+      KAFKA_BOOTSTRAP_SERVERS: "host.docker.internal:9094"
+      KAFKA_TOPIC: otel-traces
+      KAFKA_GROUP_ID: dependency-graph-builder-group
+    secretEnv:
+      API_KEY: api-key
+    readinessProbe:
+      path: /health
+      initialDelaySeconds: 5
+      periodSeconds: 5
+    livenessProbe:
+      path: /health
+      initialDelaySeconds: 10
+      periodSeconds: 10
+
+  - name: rootcause-engine
+    image: rootcause-engine:latest
+    port: 8008
+    env:
+      # Now REAL in-cluster DNS names, not localhost -- possible only
+      # because incident-engine and dependency-graph are themselves
+      # now Deployments with their own stable Service names.
+      INCIDENT_ENGINE_URL: "http://incident-engine:8007"
+      DEPENDENCY_GRAPH_URL: "http://dependency-graph:8006"
+      PROMETHEUS_URL: "http://host.docker.internal:9090"
+      PROMETHEUS_USER: admin
+    secretEnv:
+      API_KEY: api-key
+      PROMETHEUS_PASSWORD: prometheus-password
+    readinessProbe:
+      path: /health
+      initialDelaySeconds: 5
+      periodSeconds: 5
+    livenessProbe:
+      path: /health
+      initialDelaySeconds: 10
+      periodSeconds: 10
+
+imagePullPolicy: IfNotPresent
+
+otelCollectorEndpoint: "host.docker.internal:4317"
+
+customer:
+  id: "local-dev"
+  version: "dev"
+
+postgres:
+  image: postgres:16-alpine
+  storage: 1Gi
+  user: incident_admin
+  database: incident_commander
+
+redis:
+  image: redis:7-alpine
+
+paymentServiceAutoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 50
+
+# meshPolicy.enabled STILL defaults to false. The blocker has
+# genuinely shrunk, though -- previously ALL THREE of
+# incident-engine/telemetry-consumer/zscore-detector needed
+# port-forward access to bypass mesh identity checks. Now the only
+# thing that still needs the loophole is chaos/log_deployment.py
+# (still a standalone, port-forwarded dev tool by design -- it's an
+# ad-hoc script, not a service worth containerizing) and any manual
+# `psql` debugging session. Worth reconsidering flipping this on once
+# you're comfortable losing direct psql access without a port-forward.
+meshPolicy:
+  enabled: false
+  namespace: default
+
+# ---- NEW: background workers, no HTTP port ----
+workers:
+  - name: telemetry-consumer
+    image: telemetry-consumer:latest
+    env:
+      KAFKA_BOOTSTRAP_SERVERS: "host.docker.internal:9094"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: incident_admin
+      POSTGRES_DB: incident_commander
+    secretEnv:
+      POSTGRES_PASSWORD: postgres-password
+
+  - name: zscore-detector
+    image: zscore-detector:latest
+    # Uses the script's own existing --flags rather than needing any
+    # code change to zscore_detector.py at all -- it already accepted
+    # these as CLI arguments since Milestone 1.O.
+    command:
+      - "python"
+      - "zscore_detector.py"
+      - "--prometheus-url"
+      - "http://host.docker.internal:9090"
+      - "--incident-engine-url"
+      - "http://incident-engine:8007"
+      - "--poll-interval"
+      - "15"
+    env: {}
+    secretEnv:
+      API_KEY: api-key
+      PROMETHEUS_PASSWORD: prometheus-password

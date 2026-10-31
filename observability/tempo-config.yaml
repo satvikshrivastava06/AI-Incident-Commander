@@ -1,0 +1,31 @@
+# Minimal single-binary Tempo configuration for local development.
+# Tempo receives spans (via its own OTLP receiver, matching the same
+# receiver config shape as the OTel Collector) and stores them on the
+# local filesystem -- no object storage (S3/GCS) needed for this stage.
+
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 1h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/traces
+    wal:
+      path: /var/tempo/wal

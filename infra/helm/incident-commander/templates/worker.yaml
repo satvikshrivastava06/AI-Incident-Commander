@@ -1,0 +1,66 @@
+{{- range .Values.workers }}
+# Same dedicated-ServiceAccount reasoning as microservice.yaml -- a
+# distinct mesh identity per worker, not the shared "default" one.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .name }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .name }}
+  labels:
+    app: {{ .name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .name }}
+      annotations:
+        linkerd.io/inject: enabled
+    spec:
+      serviceAccountName: {{ .name }}
+      containers:
+        - name: {{ .name }}
+          image: {{ .image }}
+          imagePullPolicy: {{ $.Values.imagePullPolicy }}
+          {{- if .command }}
+          # Only set for workers that need arguments beyond their
+          # Dockerfile's default CMD (zscore-detector, below) --
+          # workers without this key simply run their image's default
+          # command unmodified (telemetry-consumer).
+          command:
+            {{- range .command }}
+            - {{ . | quote }}
+            {{- end }}
+          {{- end }}
+          env:
+            {{- if .env }}
+            {{- range $key, $value := .env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .secretEnv }}
+            {{- range $envName, $secretKey := .secretEnv }}
+            - name: {{ $envName }}
+              valueFrom:
+                secretKeyRef:
+                  name: incident-commander-secrets
+                  key: {{ $secretKey }}
+            {{- end }}
+            {{- end }}
+          # No ports, no Service, no readiness/liveness probes --
+          # unlike every other Deployment in this chart, these have
+          # nothing listening on a port to check. A real production
+          # version would want SOME liveness signal (an exec probe
+          # checking the process is still running, at minimum) --
+          # deliberately left out here rather than faking a check that
+          # doesn't actually verify anything meaningful.
+---
+{{- end }}

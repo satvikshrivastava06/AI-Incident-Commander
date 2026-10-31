@@ -1,0 +1,8 @@
+# Copy to values-customer.yaml. Not secret. Pass as a THIRD -f flag:
+#   helm upgrade --install incident-commander . \
+#     -f values.yaml -f values-secrets.yaml -f values-customer.yaml
+# Identity label only: shows up as deployment.id on every trace.
+
+customer:
+  id: "local-dev-yourname"
+  version: "2026-09-26"

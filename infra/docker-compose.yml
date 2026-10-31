@@ -1,0 +1,157 @@
+services:
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    networks:
+      - incident-net
+
+  prometheus:
+    image: prom/prometheus:v3.8.1
+    container_name: prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--web.config.file=/etc/prometheus/web-config.yml"
+    volumes:
+      - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/prometheus-web-config.yml:/etc/prometheus/web-config.yml:ro
+    ports:
+      - "9090:9090"
+    networks:
+      - incident-net
+
+  grafana:
+    image: grafana/grafana:13.1.0
+    container_name: grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      PROMETHEUS_BASIC_AUTH_PASSWORD: ${PROMETHEUS_BASIC_AUTH_PASSWORD}
+    volumes:
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - tempo
+      - loki
+    networks:
+      - incident-net
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.156.0
+    container_name: otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    environment:
+      OTEL_AUTH_TOKEN: ${OTEL_AUTH_TOKEN:-CHANGE_ME}
+    volumes:
+      - ../observability/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    depends_on:
+      tempo:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+    networks:
+      - incident-net
+
+  tempo:
+    image: grafana/tempo:2.9.0
+    container_name: tempo
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ../observability/tempo-config.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    ports:
+      - "3200:3200"
+    networks:
+      - incident-net
+
+  loki:
+    image: grafana/loki:3.7.0
+    container_name: loki
+    command: ["-config.file=/etc/loki/loki-config.yaml"]
+    volumes:
+      - ../observability/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    networks:
+      - incident-net
+
+  promtail:
+    image: grafana/promtail:3.6.11
+    container_name: promtail
+    command: ["-config.file=/etc/promtail/promtail-config.yaml"]
+    volumes:
+      - ../observability/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    networks:
+      - incident-net
+
+  # ---- NEW in Milestone 1.I ----
+
+  kafka:
+    image: apache/kafka:4.3.1
+    container_name: kafka
+    hostname: kafka
+    ports:
+      - "9092:9092"
+      - "9094:9094"
+    environment:
+      # KRaft mode: this single node acts as BOTH the message broker
+      # AND the metadata controller (the role Zookeeper used to play).
+      # There's no separate coordination service to run anymore.
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      # Three listeners, three jobs:
+      #  - PLAINTEXT (19092): how OTHER CONTAINERS on incident-net reach Kafka
+      #  - CONTROLLER (9093): internal KRaft consensus traffic only
+      #  - PLAINTEXT_HOST (9092): how tools on YOUR HOST MACHINE reach Kafka
+      KAFKA_LISTENERS: PLAINTEXT://kafka:19092,CONTROLLER://kafka:9093,PLAINTEXT_HOST://0.0.0.0:9092,PLAINTEXT_K8S://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092,PLAINTEXT_HOST://localhost:9092,PLAINTEXT_K8S://host.docker.internal:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,PLAINTEXT_K8S:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    networks:
+      - incident-net
+
+networks:
+  incident-net:
+    driver: bridge
+
+volumes:
+  grafana_data:
+  tempo_data:
+  loki_data:
+  kafka_data:

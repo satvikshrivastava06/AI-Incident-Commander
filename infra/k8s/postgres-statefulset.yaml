@@ -1,0 +1,71 @@
+# A StatefulSet, unlike a Deployment, gives each Pod a STABLE, unique
+# identity (postgres-0, postgres-1, ...) and stable storage that
+# follows that specific Pod across restarts. A Deployment's Pods are
+# interchangeable -- kill one, get a fresh one, nobody cares which.
+# For a database, that's disastrous: if Kubernetes replaced a crashed
+# Postgres Pod with a brand-new one that happened to attach a BLANK
+# volume, you'd silently lose every transaction ever written.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_USER
+              value: incident_admin
+            - name: POSTGRES_PASSWORD
+              value: incident_pass
+            - name: POSTGRES_DB
+              value: incident_commander
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: postgres-storage
+              mountPath: /var/lib/postgresql/data
+  # volumeClaimTemplates is what makes this different from just adding
+  # a `volumes:` block to a Deployment: Kubernetes provisions a FRESH,
+  # DEDICATED PersistentVolumeClaim for EACH Pod identity in this
+  # StatefulSet (postgres-0 gets its own PVC, forever tied to it), using
+  # your cluster's default StorageClass -- kind and minikube both ship
+  # one out of the box, so no extra provisioner config is needed here.
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+# A "headless" Service (clusterIP: None) is the standard pairing for a
+# StatefulSet. Instead of load-balancing across interchangeable Pods
+# like a normal Service, it gives you direct, stable DNS to each
+# individual Pod identity (e.g. postgres-0.postgres). For our
+# single-replica case, plain "postgres" still resolves correctly too --
+# so payment-service's existing POSTGRES_HOST=postgres keeps working
+# completely unchanged.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432

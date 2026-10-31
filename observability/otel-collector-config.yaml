@@ -1,0 +1,74 @@
+# OpenTelemetry Collector configuration.
+#
+# The Collector sits between your application services and your
+# observability backends (Tempo, and later Loki + Kafka). This is the
+# "agent -> collector -> backend" pipeline pattern: your services don't
+# talk to Tempo directly -- they all send data to ONE collector, and the
+# collector decides where it goes from there. That indirection means you
+# can add/change backends later without touching a single line of
+# application code.
+
+extensions:
+  bearertokenauth:
+    token: ${env:OTEL_AUTH_TOKEN}
+
+receivers:
+  # Accepts telemetry in OTLP format (the format our services already
+  # speak, via OTLPSpanExporter) over both gRPC and HTTP.
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        auth:
+          authenticator: bearertokenauth
+      http:
+        endpoint: 0.0.0.0:4318
+        auth:
+          authenticator: bearertokenauth
+
+processors:
+  # Batches spans together before exporting, instead of making one
+  # network call per span. Same idea as BatchSpanProcessor in the SDK --
+  # just applied at the collector level, for data coming from EVERY
+  # service, not just one.
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+exporters:
+  # Forwards received traces on to Tempo, which stores them and makes
+  # them queryable. Tempo also speaks OTLP, so no translation needed.
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # Prints a detailed summary of every batch of telemetry the collector
+  # receives, straight to this container's own console. This is your
+  # single best debugging tool while wiring up the pipeline: if data
+  # isn't reaching Tempo, checking whether it's even reaching the
+  # collector (via this exporter's output) is the first thing to check.
+  debug:
+    verbosity: detailed
+
+# NEW in Milestone 1.I: publishes every trace onto a Kafka topic, in
+  # addition to sending it to Tempo. "otlp_proto" encoding means each
+  # Kafka message is a serialized ExportTraceServiceRequest protobuf --
+  # the exact same wire format used for OTLP/gRPC, just written to a
+  # topic instead of sent over a direct connection.
+  kafka:
+    brokers:
+      - kafka:19092
+    traces:
+      topic: otel-traces
+      encoding: otlp_proto
+
+service:
+  extensions: [bearertokenauth]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      # A single pipeline can fan out to multiple exporters. Every span
+      # that arrives now goes to ALL THREE of these, independently.
+      exporters: [otlp/tempo, debug, kafka]
